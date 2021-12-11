@@ -1,5 +1,6 @@
 from gym_minigrid.minigrid import (MiniGridEnv, Grid, Lava, Floor,
                                    Ball, Key, Door, Goal, Wall, Box)
+from gym_minigrid.minigrid import WorldObj as BaseWorldObj
 from gym_minigrid.wrappers import (ReseedWrapper, FullyObsWrapper,
                                    ViewSizeWrapper)
 from gym_minigrid.minigrid import (IDX_TO_COLOR, STATE_TO_IDX,
@@ -77,7 +78,7 @@ GYM_MONITOR_LOG_DIR_NAME = 'minigrid_env_logs'
 WHITE = 230
 
 
-class WorldObj:
+class WorldObj(BaseWorldObj):
     """
     Base class for grid world objects
     """
@@ -94,29 +95,6 @@ class WorldObj:
 
         # Current position of the object
         self.cur_pos = None
-
-    def can_move(self):
-        return False
-
-    def can_overlap(self):
-        """Can the agent overlap with this?"""
-        return False
-
-    def can_pickup(self):
-        """Can the agent pick this up?"""
-        return False
-
-    def can_contain(self):
-        """Can this contain another object?"""
-        return False
-
-    def see_behind(self):
-        """Can the agent see behind this object?"""
-        return True
-
-    def toggle(self, env, pos):
-        """Method to trigger/toggle an action this object performs"""
-        return False
 
     def encode(self):
         """Encode the a description of this object as a 3-tuple of integers"""
@@ -160,10 +138,6 @@ class WorldObj:
             assert False, "unknown object type in decode '%s'" % obj_type
 
         return v
-
-    def render(self, r):
-        """Draw this object with the given renderer"""
-        raise NotImplementedError
 
 
 class Carpet(WorldObj):
@@ -226,23 +200,7 @@ class Fish(WorldObj):
 
 class Agent(WorldObj):
 
-    class Actions(IntEnum):
-        # Turn left, turn right, move forward
-        left = 0
-        right = 1
-        forward = 2
-
-        # Pick up an object
-        pickup = 3
-        # Drop an object
-        drop = 4
-        # Toggle/activate an object
-        toggle = 5
-
-        # Done completing task
-        done = 6
-
-    def __init__(self, name: str, color='red', view_size: int=7):
+    def __init__(self, name: str, color='red', view_size: int=7, actions_type: str = 'static'):
         super(Agent, self).__init__('agent', color)
         self.name = name
         self.view_size = view_size
@@ -251,14 +209,55 @@ class Agent(WorldObj):
         self.dir: List[float] = None
         self.carrying: WorldObj = None
 
-        self.actions = Actions
+        self.set_actions_type(actions_type)
 
-    def step(self, action: ActionsEnum, grid: Grid) -> Tuple[float, bool]:
+    def set_actions_type(self, actions_type: str):
+        self._allowed_actions_types = set(['static', 'simple_static',
+                                           'diag_static', 'default'])
+        if actions_type not in self._allowed_actions_types:
+            msg = f'actions_type ({actions_type}) must be one of: ' + \
+                  f'{actions_type}'
+            raise ValueError(msg)
+
+        if actions_type == 'simple_static' or actions_type == 'diag_static':
+            self.directionless_agent = True
+        elif actions_type == 'static' or actions_type == 'default':
+            self.directionless_agent = False
+
+        self._actions_type = actions_type
+
+        if actions_type == 'static':
+            actions = ModifyActionsWrapper.StaticActions
+            step_function = self._step_default
+        elif actions_type == 'simple_static':
+            actions = ModifyActionsWrapper.SimpleStaticActions
+            step_function = self._step_simple_static
+        elif actions_type == 'diag_static':
+            actions = ModifyActionsWrapper.DiagStaticActions
+            step_function = self._step_diag_static
+        elif actions_type == 'default':
+            actions = MiniGridEnv.Actions
+            step_function = self._step_default
+
+        self.actions = actions
+        self._step = step_function
+
+        # building some more constant DICTS dynamically from the env data
+        self.ACTION_STR_TO_ENUM = {self._get_action_str(action): action \
+                                   for action in self.actions}
+        self.ACTION_ENUM_TO_STR = dict(zip(self.ACTION_STR_TO_ENUM.values(),
+                                           self.ACTION_STR_TO_ENUM.keys()))
+
+    def step(self, action: ActionsEnum, grid: Grid) -> Tuple[Done, Reward]:
+        return self._step(action, grid)
+
+    def _step_default(self, action: IntEnum, grid: Grid) -> Tuple[Done, Reward]:
         """
         """
-        if action is None:
-            reward = 0
-            done = False
+        reward = 0
+        done = False
+
+        if action is None or np.isnan(action):
             return reward, done
 
         # Get the position in front of the agent
@@ -290,48 +289,105 @@ class Agent(WorldObj):
             if fwd_cell != None and fwd_cell.type == 'lava':
                 done = True
 
-        # Pick up an object
-        elif action == self.actions.pickup:
-            if fwd_cell and fwd_cell.can_pickup():
-                if self.carrying is None:
-                    self.carrying = fwd_cell
-                    self.carrying.cur_pos = np.array([-1, -1])
-                    grid.set(*fwd_pos, None)
-
-        # Drop an object
-        elif action == self.actions.drop:
-            if not fwd_cell and self.carrying:
-                grid.set(*fwd_pos, self.carrying)
-                self.carrying.cur_pos = fwd_pos
-                self.carrying = None
-
-        # Toggle/activate an object
-        elif action == self.actions.toggle:
-            if fwd_cell:
-                fwd_cell.toggle(self, fwd_pos)
-
-        # Done action (not used by default)
-        elif action == self.actions.done:
-            pass
-
         else:
             assert False, "unknown action"
 
         return reward, done
+
+    def _step_diag_static(self, action: IntEnum, grid: Grid) -> Tuple[Done, Reward]:
+
+        reward = 0
+        done = False
+
+        if action is None or np.nan:
+            return reward, done
+
+        start_pos = self.pos
+
+        # a diagonal action is really just two simple actions :)
+        pos_delta = ModifyActionsWrapper.DIAG_ACTION_TO_POS_DELTA[action]
+
+        # Get the contents of the new cell of the agent
+        new_pos = tuple(np.add(start_pos, pos_delta))
+        new_cell = grid.get(*new_pos)
+
+        if new_cell is None or new_cell.can_overlap():
+            grid.set(*self.pos, None)
+            self.pos = new_pos
+            grid.set(*new_pos, self)
+        if new_cell is not None and new_cell.type == 'goal':
+            done = True
+            reward = self._reward()
+        if new_cell is not None and new_cell.type == 'lava':
+            done = True
+
+        return done, reward
+
+    def _step_simple_static(self, action: IntEnum, grid: Grid) -> Tuple[Done, Reward]:
+
+        reward = 0
+        done = False
+
+        if action is None or np.nan:
+            return reward, done
+
+        # save the original direction so we can reset it after moving
+        old_dir = self.dir
+        new_dir = ModifyActionsWrapper.SIMPLE_ACTION_TO_DIR_IDX[action]
+        self.dir = new_dir
+
+        # Get the contents of the cell in front of the agent
+        fwd_pos = self.front_pos
+        fwd_cell = grid.get(*fwd_pos)
+
+        if fwd_cell is None or fwd_cell.can_overlap():
+            grid.set(*self.pos, None)
+            self.pos = fwd_pos
+            grid.set(*fwd_pos, self)
+        if fwd_cell is not None and fwd_cell.type == 'goal':
+            done = True
+            reward = self._reward()
+        if fwd_cell is not None and fwd_cell.type == 'lava':
+            done = True
+
+        # reset the direction of the agent, as it really cannot change
+        # direction
+        base_env.agent_dir = old_dir
+
+        return done, reward
+
+    def _get_action_str(self, action_enum: ActionsEnum) -> str:
+        """
+        Gets a string representation of the action enum constant
+
+        :param      action_enum:  The action enum constant to convert
+
+        :returns:   The action enum's string representation
+        """
+
+        return self.actions._member_names_[action_enum]
 
     def _reward(self):
         return 0
 
     def render(self, img):
         c = COLORS[self.color]
-        tri_fn = point_in_triangle(
-            (0.12, 0.19),
-            (0.87, 0.50),
-            (0.12, 0.81),
-        )
-        # Rotate the agent based on its direction
-        tri_fn = rotate_fn(tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * self.dir)
-        fill_coords(img, tri_fn, c)
+
+        if self.directionless_agent:
+
+            cir_fn = point_in_circle(cx=0.5, cy=0.5, r=0.3)
+            fill_coords(img, cir_fn, c)
+
+        else:
+
+            tri_fn = point_in_triangle(
+                (0.12, 0.19),
+                (0.87, 0.50),
+                (0.12, 0.81),
+            )
+            # Rotate the agent based on its direction
+            tri_fn = rotate_fn(tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * self.dir)
+            fill_coords(img, tri_fn, c)
 
     def encode(self):
         """Encode the a description of this object as a 3-tuple of integers"""
@@ -457,18 +513,54 @@ class MultiAgentMiniGridEnv(MiniGridEnv):
         see_through_walls: bool=False,
         seed: int=1337,
         agent_view_size=7):
-        super(MultiAgentMiniGridEnv, self).__init__(
-            grid_size,
-            width,
-            height,
-            max_steps,
-            see_through_walls,
-            seed,
-            agent_view_size
+
+        # Can't set both grid_size and width/height
+        if grid_size:
+            assert width == None and height == None
+            width = grid_size
+            height = grid_size
+
+        # Number of cells (width and height) in the agent view
+        assert agent_view_size % 2 == 1
+        assert agent_view_size >= 3
+        self.view_size = agent_view_size
+
+        # Observations are dictionaries containing an
+        # encoding of the grid and a textual 'mission' string
+        self.observation_space = spaces.Box(
+            low=0,
+            high=255,
+            shape=(agent_view_size, agent_view_size, 3),
+            dtype='uint8'
         )
+        self.observation_space = spaces.Dict({
+            'image': self.observation_space
+        })
+
+        # Range of possible rewards
+        self.reward_range = (0, 1)
+
+        # Window to use for human rendering mode
+        self.window = None
+
+        # Environment configuration
+        self.width = width
+        self.height = height
+        self.max_steps = max_steps
+        self.see_through_walls = see_through_walls
+
+        # Current position and direction of the agent
+        # self.agent_pos = None
+        # self.agent_dir = None
+
+        # Initialize the RNG
+        self.seed(seed=seed)
+
+        # Initialize the state
         # Assume grid is generated and agents/objects are placed
         # by calling self.reset()
-        # Use grid = MultiObjGrid(Grid(width, height)) for grid
+        # Use grid = MultiObjGrid(Grid(width, height))
+        self.reset()
 
         # TODO: Need to re-think how I should keep actions
         self.actions = {a.name: a.actions for a in self.agents}
@@ -483,6 +575,9 @@ class MultiAgentMiniGridEnv(MiniGridEnv):
         # To keep the same grid for each episode, call env.seed() with
         # the same seed before calling env.reset()
         self._gen_grid(self.width, self.height)
+
+        if self.agents is None:
+            raise Exception('There is no agent in the grid')
 
         # These fields should be defined by _gen_grid
         for a in self.agents:
@@ -503,16 +598,18 @@ class MultiAgentMiniGridEnv(MiniGridEnv):
 
     def step(self, action: MultiAgentAction) -> StepData:
 
-        self.step_action += 1
+        self.step_count += 1
 
         reward = 0
         done = False
 
         # Concat rewards and dones
-        for agent, a in zip(self.agents):
+        for agent, a in zip(self.agents, action):
             # pass grid by reference so that each agent can
             # manipulate the grid
             reward_, done_ = agent.step(a, self.grid)
+            reward += reward_
+            done = bool(done + done_)
 
         if self.step_count >= self.max_steps:
             done = True
@@ -581,7 +678,14 @@ class MultiAgentMiniGridEnv(MiniGridEnv):
         return img
 
     def put_agent(self, agent, i, j, direction):
+        agent.pos = np.array([i, j])
         agent.dir = direction
+
+        if self.agents is None:
+            self.agents = [agent]
+        else:
+            self.agents.append(agent)
+
         return super().put_obj(agent, i, j)
 
     def place_agent(self, top=None, size=None, rand_dir=True, max_tries=math.inf):
@@ -590,18 +694,79 @@ class MultiAgentMiniGridEnv(MiniGridEnv):
         """
 
         if self.agents is None:
-            name = 'agent1'
+            agent = Agent(name='agent1', view_size=self.view_size)
         else:
             n_agent = len(self.agents)
-            name = f'agent{n_agent+1}'
+            agent = Agent(name=f'agent{n_agent+1}', view_size=self.view_size)
 
-        pos = self.place_obj(Agent(name), top, size, max_tries=max_tries)
-        curr_agent = len(self.agents) - 1
+        pos = self.place_obj(agent, top, size, max_tries=max_tries)
+        agent.pos = pos
 
         if rand_dir:
-            self.agents[curr_agent].dir = self._rand_int(0, 4)
+            agent.dir = self._rand_int(0, 4)
+
+        if self.agents is None:
+            self.agents = [agent]
+        else:
+            self.agents.append(agent)
 
         return pos
+
+    def gen_obs_grid(self):
+        """
+        Generate the sub-grid observed by the agent.
+        This method also outputs a visibility mask telling us which grid
+        cells the agent can actually see.
+        """
+
+        topX, topY, botX, botY = self.get_view_exts()
+
+        grid = self.grid.slice(topX, topY, self.agent_view_size, self.agent_view_size)
+
+        for i in range(self.agent_dir + 1):
+            grid = grid.rotate_left()
+
+        # Process occluders and visibility
+        # Note that this incurs some performance cost
+        if not self.see_through_walls:
+            vis_mask = grid.process_vis(agent_pos=(self.agent_view_size // 2 , self.agent_view_size - 1))
+        else:
+            vis_mask = np.ones(shape=(grid.width, grid.height), dtype=np.bool)
+
+        # Make it so the agent sees what it's carrying
+        # We do this by placing the carried object at the agent's position
+        # in the agent's partially observable view
+        agent_pos = grid.width // 2, grid.height - 1
+        if self.carrying:
+            grid.set(*agent_pos, self.carrying)
+        else:
+            grid.set(*agent_pos, None)
+
+        return grid, vis_mask
+
+    def gen_obs(self):
+        """
+        Generate the agent's view (partially observable, low-resolution encoding)
+        """
+
+        grid, vis_mask = self.gen_obs_grid()
+
+        # Encode the partially observable view into a numpy array
+        image = grid.encode(vis_mask)
+
+        assert hasattr(self, 'mission'), "environments must define a textual mission string"
+
+        # Observations are dictionaries containing:
+        # - an image (partially observable view of the environment)
+        # - the agent's direction/orientation (acting as a compass)
+        # - a textual mission string (instructions for the agent)
+        obs = {
+            'image': image,
+            'direction': self.agent_dir,
+            'mission': self.mission
+        }
+
+        return obs
 
     @property
     def agent_pos(self):
@@ -615,17 +780,29 @@ class MultiAgentMiniGridEnv(MiniGridEnv):
     def agent_view_size(self):
         return self.agents[0].view_size
 
+    @agent_view_size.setter
+    def agent_view_size(self, view_size):
+        self.view_size = view_size
+        for agent in self.agents:
+            agent.view_size = view_size
+
     @property
     def carrying(self):
         return self.agents[0].carrying
 
     @property
     def dir_vec(self):
-        self.agents[0].dir_vec
+        return self.agents[0].dir_vec
 
     @property
     def right_vec(self):
-        self.agents[0].right_vec
+        return self.agents[0].right_vec
+
+    @property
+    def n_agent(self):
+        if self.agents is None:
+            return 0
+        return len(self.agents)
 
 
 class ModifyActionsWrapper(gym.core.Wrapper):
@@ -689,261 +866,6 @@ class ModifyActionsWrapper(gym.core.Wrapper):
         forward = 2
 
     def __init__(self, env: EnvType, actions_type: str = 'static'):
-
-        # actually creating the minigrid environment with appropriate wrappers
-        super().__init__(env)
-
-        self._allowed_actions_types = set(['static', 'simple_static',
-                                           'diag_static', 'default'])
-        if actions_type not in self._allowed_actions_types:
-            msg = f'actions_type ({actions_type}) must be one of: ' + \
-                  f'{actions_type}'
-            raise ValueError(msg)
-
-        # Need to change the Action enumeration in the base environment.
-        # This also changes the "step" behavior, so we also change that out
-        # to match the new set of actions
-        self._actions_type = actions_type
-
-        if actions_type == 'static':
-            actions = ModifyActionsWrapper.StaticActions
-            step_function = self._step_default
-        elif actions_type == 'simple_static':
-            actions = ModifyActionsWrapper.SimpleStaticActions
-            step_function = self._step_simple_static
-        elif actions_type == 'diag_static':
-            actions = ModifyActionsWrapper.DiagStaticActions
-            step_function = self._step_diag_static
-        elif actions_type == 'default':
-            actions = MiniGridEnv.Actions
-            step_function = self._step_default
-
-        self.unwrapped.actions = actions
-        self._step_function = step_function
-
-        # Actions are discrete integer values
-        num_actions = len(self.unwrapped.actions)
-        self.unwrapped.action_space = gym.spaces.Discrete(num_actions)
-
-        # building some more constant DICTS dynamically from the env data
-        self.ACTION_STR_TO_ENUM = {self._get_action_str(action): action
-                                   for action in self.unwrapped.actions}
-        self.ACTION_ENUM_TO_STR = dict(zip(self.ACTION_STR_TO_ENUM.values(),
-                                           self.ACTION_STR_TO_ENUM.keys()))
-
-    def step(self, action: IntEnum) -> StepData:
-
-        # all of these changes must affect the base environment to be seen
-        # across all other wrappers
-        base_env = self.unwrapped
-
-        base_env.step_count += 1
-
-        done, reward = self._step_function(action)
-
-        if base_env.step_count >= base_env.max_steps:
-            done = True
-
-        obs = base_env.gen_obs()
-
-        return obs, reward, done, {}
-
-    def _step_diag_static(self, action: IntEnum) -> Tuple[Done, Reward]:
-
-        reward = 0
-        done = False
-
-        # all of these changes must affect the base environment to be seen
-        # across all other wrappers
-        base_env = self.unwrapped
-
-        start_pos = base_env.agent_pos
-
-        # a diagonal action is really just two simple actions :)
-        pos_delta = ModifyActionsWrapper.DIAG_ACTION_TO_POS_DELTA[action]
-
-        # Get the contents of the new cell of the agent
-        new_pos = tuple(np.add(start_pos, pos_delta))
-        new_cell = base_env.grid.get(*new_pos)
-
-        if new_cell is None or new_cell.can_overlap():
-            base_env.agent_pos = new_pos
-        if new_cell is not None and new_cell.type == 'goal':
-            done = True
-            reward = base_env._reward()
-        if new_cell is not None and new_cell.type == 'lava':
-            done = True
-
-        return done, reward
-
-    def _step_simple_static(self, action: IntEnum) -> Tuple[Done, Reward]:
-
-        # all of these changes must affect the base environment to be seen
-        # across all other wrappers
-        base_env = self.unwrapped
-
-        reward = 0
-        done = False
-
-        # save the original direction so we can reset it after moving
-        old_dir = base_env.agent_dir
-        new_dir = ModifyActionsWrapper.SIMPLE_ACTION_TO_DIR_IDX[action]
-        base_env.agent_dir = new_dir
-
-        # Get the contents of the cell in front of the agent
-        fwd_pos = base_env.front_pos
-        fwd_cell = base_env.grid.get(*fwd_pos)
-
-        if fwd_cell is None or fwd_cell.can_overlap():
-            base_env.agent_pos = fwd_pos
-        if fwd_cell is not None and fwd_cell.type == 'goal':
-            done = True
-            reward = base_env._reward()
-        if fwd_cell is not None and fwd_cell.type == 'lava':
-            done = True
-
-        # reset the direction of the agent, as it really cannot change
-        # direction
-        base_env.agent_dir = old_dir
-
-        return done, reward
-
-    def _step_default(self, action: IntEnum) -> Tuple[Done, Reward]:
-
-        reward = 0
-        done = False
-
-        # all of these changes must affect the base environment to be seen
-        # across all other wrappers
-        base_env = self.unwrapped
-
-        # Get the position in front of the agent
-        fwd_pos = base_env.front_pos
-
-        # Get the contents of the cell in front of the agent
-        fwd_cell = base_env.grid.get(*fwd_pos)
-        # Rotate left
-        if action == base_env.actions.left:
-            base_env.agent_dir -= 1
-            if base_env.agent_dir < 0:
-                base_env.agent_dir += 4
-
-        # Rotate right
-        elif action == base_env.actions.right:
-            base_env.agent_dir = (base_env.agent_dir + 1) % 4
-
-        # Move forward
-        elif action == base_env.actions.forward:
-            if fwd_cell is None or fwd_cell.can_overlap():
-                base_env.agent_pos = fwd_pos
-            if fwd_cell is not None and fwd_cell.type == 'goal':
-                done = True
-                reward = base_env._reward()
-            if fwd_cell is not None and fwd_cell.type == 'lava':
-                done = True
-
-        # Pick up an object
-        elif action == base_env.actions.pickup:
-            if fwd_cell and fwd_cell.can_pickup():
-                if base_env.carrying is None:
-                    base_env.carrying = fwd_cell
-                    base_env.carrying.cur_pos = np.array([-1, -1])
-                    base_env.grid.set(*fwd_pos, None)
-
-        # Drop an object
-        elif action == base_env.actions.drop:
-            if not fwd_cell and base_env.carrying:
-                base_env.grid.set(*fwd_pos, base_env.carrying)
-                base_env.carrying.cur_pos = fwd_pos
-                base_env.carrying = None
-
-        # Toggle/activate an object
-        elif action == base_env.actions.toggle:
-            if fwd_cell:
-                fwd_cell.toggle(base_env, fwd_pos)
-
-        # Done action (not used by default)
-        elif action == base_env.actions.done:
-            pass
-
-        else:
-            assert False, "unknown action"
-
-        return done, reward
-
-    def _get_action_str(self, action_enum: ActionsEnum) -> str:
-        """
-        Gets a string representation of the action enum constant
-
-        :param      action_enum:  The action enum constant to convert
-
-        :returns:   The action enum's string representation
-        """
-
-        return self.unwrapped.actions._member_names_[action_enum]
-
-
-class ModifyAgentActionsWrapper(gym.core.Wrapper):
-    """
-    This class allows you to modify the action space and behavior of the agent
-
-    :param      env:           The gym environment to wrap
-    :param      actions_type:  The actions type string
-                               {'static', 'simple_static', 'diag_static',
-                                'default'}
-                               'static':
-                               use a directional agent only capable of going
-                               forward and turning
-                               'simple_static':
-                               use a non-directional agent which can only move
-                               in cardinal directions in the grid
-                               'default':
-                               use an agent which has the default MinigridEnv
-                               actions, suitable for dynamic environments.
-    """
-
-    # Enumeration of possible actions
-    # as this is a static environment, we will only allow for movement actions
-    # For a simple environment, we only allow the agent to move:
-    # North, South, East, or West
-    class SimpleStaticActions(IntEnum):
-        # move in this direction on the grid
-        north = 0
-        south = 1
-        east = 2
-        west = 3
-
-    SIMPLE_ACTION_TO_DIR_IDX = {SimpleStaticActions.north: 3,
-                                SimpleStaticActions.south: 1,
-                                SimpleStaticActions.east: 0,
-                                SimpleStaticActions.west: 2}
-
-    # Enumeration of possible actions
-    # as this is a static environment, we will only allow for movement actions
-    # For a simple environment, we only allow the agent to move:
-    # Northeast, Northwest, Southeast, or Southwest
-    class DiagStaticActions(IntEnum):
-        # move in this direction on the grid
-        northeast = 0
-        northwest = 1
-        southeast = 2
-        southwest = 3
-
-    DIAG_ACTION_TO_POS_DELTA = {
-        DiagStaticActions.northeast: (1, -1),
-        DiagStaticActions.northwest: (-1, -1),
-        DiagStaticActions.southeast: (1, 1),
-        DiagStaticActions.southwest: (-1, 1)}
-
-    # Enumeration of possible actions
-    # as this is a static environment, we will only allow for movement actions
-    class StaticActions(IntEnum):
-        # Turn left, turn right, move forward
-        left = 0
-        right = 1
-        forward = 2
-
-    def __init__(self, env: EnvType, agent_name: str, actions_type: str = 'static'):
 
         # actually creating the minigrid environment with appropriate wrappers
         super().__init__(env)
@@ -1880,7 +1802,7 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
         self,
         env: MultiAgentEnvType,
         seeds: List[int] = [0],
-        actions_type: str = 'static', # TODO: extend to multiple agents and actions_types
+        actions_types: List[str] = 'static',
         monitor_log_location: str = GYM_MONITOR_LOG_DIR_NAME,
         concurrent: bool = False,
     ) -> 'DynamicMinigrid2PGameWrapper':
@@ -1891,24 +1813,8 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
         self._uid_monitor = None
         self._mode = None
 
-        # TODO: extend to multiple agents and actions_types
-        self._allowed_actions_types = set(['static', 'simple_static',
-                                           'diag_static', 'default'])
-        if actions_type not in self._allowed_actions_types:
-            msg = f'actions_type ({actions_type}) must be one of: ' + \
-                  f'{self._allowed_actions_types}'
-            raise ValueError(msg)
-
-        if actions_type == 'simple_static' or actions_type == 'diag_static':
-            env.directionless_agent = True
-        elif actions_type == 'static' or actions_type == 'default':
-            env.directionless_agent = False
-
         env = ViewSizeWrapper(env, agent_view_size=3)
-        # TODO: add agent=agent and loop over multiple agents
-        # for agent_name, actions_type in action_types.items():
-        #     env = ModifyAgentActionsWrapper(env, agent_name, actions_type)
-        env = ModifyActionsWrapper(env, actions_type)
+        # env = ModifyActionsWrapper(env, actions_type)
         env = FullyObsWrapper(ReseedWrapper(env, seeds=seeds))
         env = wrappers.Monitor(env, monitor_log_location,
                                video_callable=False,
@@ -1919,22 +1825,16 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
         # actually creating the minigrid environment with appropriate wrappers
         super().__init__(env)
 
+        # if not isinstance(actions_types, List):
+        #     actions_types = [actions_types] * self.unwrapped.n_agent
+
+        # for i in range(self.unwrapped.n_agent):
+        #     self.unwrapped.agents[i].set_actions_type(actions_types[i])
+
         # TODO: This needs to be extended to include all agents actions
-        self.actions = self.unwrapped.actions
+        # self.actions = self.unwrapped.actions
 
         # Initialize some variables and functions to be used in this class
-
-        # TODO: Implement MultiAgentMiniGridEnv
-        # It should include a list of agents with:
-        #   - name,
-        #   - pos,
-        #   - dir,
-        #   - color
-        #   - actions
-        #   - action_enum_to_str: Dict[int, str]
-        # TODO: Decide how to set agent's state (pos, dir) in the base env
-        # TODO: Implement env.step(action) function for the base env
-
         self.agents = self.unwrapped.agents
 
         if concurrent:
@@ -1984,7 +1884,7 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
 
         curr_line = 0
         # For each column, store each agent's actions
-        for i, agent in enumerate(self.agents):
+        for i, agent in enumerate(self.agents[1:]):
             if agent != sys:
                 # At i+1 th column, store the agent's actions vertically
                 actions[curr_line:curr_line + len(agent.actions), i+1] = agent.actions
@@ -2118,7 +2018,7 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
 
         _, _, done, _ = self.state_only_obs_step(action)
 
-        return ((self._get_agent_props(agent) for agent in self.agents), done)
+        return tuple((self._get_agent_props(agent) for agent in self.agents)), done
 
     def _add_node(self, nodes: dict, state: MultiAgentState,
                   curr_agent: str) -> Tuple[dict, str]:
@@ -2139,29 +2039,24 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
         sys_state_pos = sys_state[0]
 
         obs = self._get_obs_at_state(state)
-        obj_type, obj_color, obj_state = obs[sys_state_pos[0], sys_state_pos[1]]
+        encoded_cell = obs[sys_state_pos[0], sys_state_pos[1]]
+        n_obj, n_info = encoded_cell.shape
+        # obj_type, obj_color, obj_state = obs[sys_state_pos[0], sys_state_pos[1]]
 
         obs_str = self._obs_to_prop_str(obs,
                                         col_idx=sys_state_pos[0],
                                         row_idx=sys_state_pos[1])
 
-        color = IDX_TO_COLOR[obj_color]
-        if IDX_TO_OBJECT[obj_type] == 'empty':
-            color = 'gray'
-        else:
-            color = MINIGRID_TO_GRAPHVIZ_COLOR[color]
-
-        is_goal = IDX_TO_OBJECT[obj_type] == 'goal'
+        # is_goal = IDX_TO_OBJECT[obj_type] == 'goal'
 
         if state not in nodes:
             state_data = {'trans_distribution': None,
                           'observation': obs_str,
-                          'is_accepting': is_goal,
-                          'color': color,
+                        #   'is_accepting': is_goal,
                           'agent': curr_agent}
             nodes[state] = state_data
 
-        return nodes, state_str
+        return nodes, state
 
     def _add_edge(self, nodes: dict, edges: dict,
                   src_agent: str,
@@ -2217,9 +2112,9 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
         """
         action_str = []
         for agent, a in zip(self.agents, action):
-            if a is None:
+            if a is None or np.isnan(a):
                 continue
-            a_str = agent.action_enum_to_str[a]
+            a_str = agent.ACTION_ENUM_TO_STR[a]
             action_str.append(a_str)
 
         return '_'.join(action_str)
@@ -2236,17 +2131,29 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
         :returns:   verbose, string representation of the state observation
         """
 
-        obj_type, obj_color, obj_state = obs[col_idx, row_idx]
-        agent_pos, _ = self._get_agent_props()
-        is_agent = (col_idx, row_idx) == tuple(agent_pos)
+        encoded_cell = obs[col_idx, row_idx]
+        n_obj, n_info = encoded_cell.shape
+        # obj_type, obj_color, obj_state = obs[col_idx, row_idx]
 
-        prop_string_base = '_'.join([IDX_TO_OBJECT[obj_type],
-                                     IDX_TO_COLOR[obj_color]])
+        prop_strings = []
 
-        if is_agent:
-            return '_'.join([prop_string_base, self.DIR_TO_STRING[obj_state]])
-        else:
-            return '_'.join([prop_string_base, self.IDX_TO_STATE[obj_state]])
+        for i_obj in range(n_obj):
+            obj_type, obj_color, obj_state = obs[col_idx, row_idx, i_obj]
+
+            agent_pos, _ = self._get_agent_props()
+            is_agent = (col_idx, row_idx) == tuple(agent_pos)
+
+            prop_string_base = '_'.join([IDX_TO_OBJECT[obj_type],
+                                        IDX_TO_COLOR[obj_color]])
+
+            if is_agent:
+                prop_str = '_'.join([prop_string_base, self.DIR_TO_STRING[obj_state]])
+            else:
+                prop_str = '_'.join([prop_string_base, self.IDX_TO_STATE[obj_state]])
+
+            prop_strings.append(prop_str)
+
+        return '__'.join(prop_strings)
 
     def _get_edge_components(self,
                              edge: Minigrid_TSEdge) -> Minigrid_Edge_Unpacked:
@@ -2286,8 +2193,8 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
             self._set_agent_props(agent, *agent_state)
 
         # Get the observation
-        grid, _ = self.env.gen_obs_grid()
-        obs =  grid.encode()
+        # grid, _ = self.env.gen_obs_grid()
+        obs =  self.env.grid.encode()
 
         # Put the state back
         for agent, state in zip(self.agents, temp_state):
@@ -2309,7 +2216,7 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
         edges = {}
 
         # State includes ((agent_pos, agent_dir), (other_agent_pos, other_agent_dir), ...)
-        src_state = ((agent.pos, agent.dir) for agent in self.agents)
+        src_state = tuple((tuple(agent.pos), agent.dir) for agent in self.agents)
         src_agent = start_agent
 
         search_queue = queue.Queue()
@@ -2389,7 +2296,7 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
         num_obs = len(observations)
 
         self.reset()
-        start_state = ((agent.pos, agent.dir) for agent in self.agents)
+        start_state = tuple((tuple(agent.pos), agent.dir) for agent in self.agents)
 
         config_data['alphabet_size'] = alphabet_size
         config_data['num_states'] = num_states
@@ -2437,37 +2344,61 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
                             self._mode)
 
 
+class ObjType:
+    def __init__(self, types):
+        self._types = types
+
+    def __eq__(self, other: str):
+        if not isinstance(other, str):
+            return False
+        return other in self._types
+
+
 class Cell:
-    def __ini__(self, objs: List[WorldObj]=None):
+    def __init__(self, objs: List[BaseWorldObj]=None):
         self.objs = objs
+        self.type = ObjType([obj.type for obj in self.objs])
+
+    def can_overlap(self):
+        return all([obj.can_overlap() for obj in self.objs])
 
     def encode(self) -> Tuple[Tuple[int, int, int], ...]:
         """
         Return an array of n objects x 3 tuples (type, color, state)
         """
-        return (obj.encode() for obj in self.objs)
+        return tuple(obj.encode() for obj in self.objs)
 
     def render(self, img):
         for obj in self.objs:
             obj.render(img)
 
-    def add(self, other: Union[WorldObj, 'Cell']):
-        if isinstance(other, WorldObj):
+    def add(self, other: Union[BaseWorldObj, 'Cell']):
+        if isinstance(other, BaseWorldObj):
             self.objs += [other]
         else:
             self.objs += other.objs
+        self.type = ObjType([obj.type for obj in self.objs])
 
-    def __add__(self, other: Union[WorldObj, 'Cell']):
-        if isinstance(other, WorldObj):
+    def __add__(self, other: Union[BaseWorldObj, 'Cell']):
+        if other is None:
+            return self
+
+        if isinstance(other, BaseWorldObj):
             return Cell(self.objs + [other])
         else:
             return Cell(self.objs + other.objs)
 
-    def __eq__(self, other: Union[WorldObj, 'Cell']):
-        if isinstance(other, WorldObj):
+    def __eq__(self, other: Union[BaseWorldObj, 'Cell']):
+        if other is None:
+            return False
+
+        if isinstance(other, BaseWorldObj):
             return self.objs == [other]
         else:
             return self.objs == other.objs
+
+    def __ne__(self, other: Union[BaseWorldObj, 'Cell']):
+        return not self == other
 
     def __len__(self):
         if self.objs is None:
@@ -2476,22 +2407,24 @@ class Cell:
 
 
 class MultiObjGrid(Grid):
-    def __init__(self, grid, **kwargs):
-        super().__init__(**kwargs)
-        self.grid = grid
+    def __init__(self, base_grid):
+        super().__init__(base_grid.width, base_grid.height)
+        self.base_grid = base_grid
 
     def __getattr__(self, name):
         if name.startswith("_"):
             raise AttributeError(
                 "attempted to get missing private attribute '{}'".format(name)
             )
-        return getattr(self.grid, name)
+        return getattr(self.base_grid, name)
 
     def set(self, i: int, j: int, v: Cell):
         assert i >= 0 and i < self.width
         assert j >= 0 and j < self.height
         existing_v = self.get(i, j)
         if existing_v is not None:
+            if isinstance(existing_v, BaseWorldObj):
+                existing_v = Cell([existing_v])
             v = existing_v + v
         self.grid[j * self.width + i] = v
 
@@ -2500,7 +2433,43 @@ class MultiObjGrid(Grid):
         assert j >= 0 and j < self.height
         return self.grid[j * self.width + i]
 
-    def encode(self, vis_mask=None, ):
+    def rotate_left(self):
+        """
+        Rotate the grid to the left (counter-clockwise)
+        """
+
+        grid = MultiObjGrid(Grid(self.height, self.width))
+
+        for i in range(self.width):
+            for j in range(self.height):
+                v = self.get(i, j)
+                grid.set(j, grid.height - 1 - i, v)
+
+        return grid
+
+    def slice(self, topX, topY, width, height):
+        """
+        Get a subset of the grid
+        """
+
+        grid = MultiObjGrid(Grid(width, height))
+
+        for j in range(0, height):
+            for i in range(0, width):
+                x = topX + i
+                y = topY + j
+
+                if x >= 0 and x < self.width and \
+                   y >= 0 and y < self.height:
+                    v = self.get(x, y)
+                else:
+                    v = Wall()
+
+                grid.set(i, j, v)
+
+        return grid
+
+    def encode(self, vis_mask=None):
         """
         Produce a compact numpy encoding of the grid
         """
@@ -2532,7 +2501,10 @@ class MultiObjGrid(Grid):
         for e in self.grid:
             if e is None:
                 continue
-            n_obj = len(e)
+            if isinstance(e, Cell):
+                n_obj = len(e)
+            else:
+                n_obj = 1
             if n_obj > max_n_obj:
                 max_n_obj = n_obj
         return max_n_obj
@@ -2702,7 +2674,7 @@ class LavaComparison(MiniGridEnv):
             if self.drying_off_task:
                 self.put_obj(Floor(color='green'), 8, 1)
             else:
-                self.put_obj(Water(), 8, 1)
+                self.put_obj(Floor(color='blue'), 8, 1)
 
         # top left Lava block
         self.put_obj(Lava(), 1, 3)
@@ -3136,12 +3108,14 @@ class FourGrids(MultiAgentMiniGridEnv):
         self,
         width=6,
         height=3,
-        agent_start_pos_list=[(1, 1), (1, 3)],
+        agent_start_pos_list=[(1, 1), (4, 1)],
         agent_start_dir_list=[0, 0],
+        agent_colors=['red', 'blue'],
         directionless_agent=True,
     ):
         self.agent_start_pos_list = agent_start_pos_list
         self.agent_start_dir_list = agent_start_dir_list
+        self.agent_colors = agent_colors
         self.goal_1_pos = (width - 2, 1)
 
         self.directionless_agent = directionless_agent
@@ -3156,11 +3130,7 @@ class FourGrids(MultiAgentMiniGridEnv):
 
     def _gen_grid(self, width, height):
 
-        # create an empty grid with different types of agents
-        if self.directionless_agent:
-            self.grid = MultiObjGrid(NoDirectionAgentGrid(width, height))
-        else:
-            self.grid = MultiObjGrid(Grid(width, height))
+        self.grid = MultiObjGrid(Grid(width, height))
 
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
@@ -3168,10 +3138,15 @@ class FourGrids(MultiAgentMiniGridEnv):
         # Place the two goal squares in the bottom-right corner
         self.put_obj(Floor(color='green'), *self.goal_1_pos)
 
+        n_agent = len(self.agent_start_pos_list)
+
         # TODO: Place the agent
-        for p, d in zip(self.agent_start_pos_list, self.agent_start_dir_list):
+        for i in range(n_agent):
+            p = self.agent_start_pos_list[i]
+            d = self.agent_start_dir_list[i]
+            c = self.agent_colors[i]
             if p is not None:
-                self.put_agent(Agent(name='agent1'), *p, d)
+                self.put_agent(Agent(name='agent1', color=c, view_size=self.view_size), *p, d)
             else:
                 self.place_agent()
 

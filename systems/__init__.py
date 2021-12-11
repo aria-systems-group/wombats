@@ -1,1 +1,2 @@
 from .minigrid import LavaComparison_noDryingOff, StaticMinigridTSWrapper
+from .minigrid import DynamicMinigrid2PGameWrapper
