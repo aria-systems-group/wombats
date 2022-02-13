@@ -15,7 +15,7 @@ from .types import (NXNodeList, NXEdgeList, Node, Symbol, Symbols,
 from .base import Automaton, SMOOTHING_AMOUNT
 from .dfa import SafetyDFA
 from .fdfa import FDFA
-from wombats.utils import logx, xlogx, xlogy
+from wombats.utils import logx, xlogx, xlogy, ylogx
 
 IS_STOCHASTIC = True
 SPEC_VIOLATING_STATE = 'q_v'

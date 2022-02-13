@@ -6,7 +6,7 @@ beta: 0.90
 alphabet_size: 3
 
 # number of states in pdfa state space
-num_states: 4
+num_states: 5
 
 # symbol to use as the transition to a final state
 final_transition_sym: '$'
@@ -15,17 +15,17 @@ final_transition_sym: '$'
 empty_transition_sym: 'lambda'
 
 # unique start state string label of pdfa
-start_state: 'q2'
+start_state: 'q0'
 
 # whether or not to smooth the input sym. transition distributions
 smooth_transitions: False
 
-# define a list of node labels, where each label is a string identifier label
-# for a unique node, and the metadata properties for each node
+
+
 nodes:
 
   'q0':
-    final_probability: 1.00
+    final_probability: 0.00
     trans_distribution: null
     is_accepting: null
 
@@ -44,55 +44,77 @@ nodes:
     trans_distribution: null
     is_accepting: null
 
-# define the edges of the graph
+  'q4':
+    final_probability: 1.00
+    trans_distribution: null
+    is_accepting: true
+
+
 edges:
+  'q0':
 
-  'q2':
-
-    'q2':
+    'q0':
       symbols:
-        - 'empty_red_open'
-      probabilities:
-        - 0.8
-
-    'q1':
-      symbols:
-        - 'floor_purple_open'
-      probabilities:
-        - 0.15
-
-    'q3':
-      symbols:
-        - 'floor_green_open'
+        - 'lambda'
       probabilities:
         - 0.05
 
-  'q1':
-
-    'q0':
-      symbols:
-        - 'floor_green_open'
-      probabilities:
-        - 0.2
-
     'q1':
       symbols:
-        - 'empty_red_open'
+        - 'o0'
       probabilities:
-        - 0.8
+        - 0.55
 
-  'q3':
+    'q2':
+      symbols:
+        - 'o1'
+      probabilities:
+        - 0.4
+
+  'q1':
 
     'q3':
       symbols:
-        - 'empty_red_open'
+        - 'o1'
       probabilities:
-        - 0.8
-
-    'q0':
+        - 0.9
+        # - 0.5
+    'q1':
       symbols:
-        - 'floor_purple_open'
+        - 'lambda'
+        - 'o0'
       probabilities:
-        - 0.2
+        - 0.05
+        - 0.05
 
-  'q0':
+  'q2':
+
+    'q3':
+      symbols:
+        - 'o0'
+      probabilities:
+        - 0.9
+        # - 0.5
+    'q2':
+      symbols:
+        - 'lambda'
+        - 'o1'
+      probabilities:
+        - 0.05
+        - 0.05
+
+  'q3':
+    'q3':
+      symbols:
+      - 'lambda'
+      - 'o0'
+      - 'o1'
+      probabilities:
+      - 0.02
+      - 0.04
+      - 0.04
+    'q4':
+      symbols:
+      - 'o2'
+      probabilities:
+      - 0.9

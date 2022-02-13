@@ -1,0 +1,42 @@
+# number of symbols in pdfa alphabet
+alphabet_size: 3
+
+# number of states in pdfa state space
+num_states: 2
+
+# symbol to use as the transition to a final state
+final_transition_sym: '$'
+
+# symbol to use as the empty (a.k.a. lambda) symbol
+empty_transition_sym: 'lambda'
+
+# unique start state string label of pdfa
+start_state: 's0'
+
+# whether or not to smooth the input sym. transition distributions
+smooth_transitions: False
+
+nodes:
+
+  's0':
+    is_accepting: False
+
+  's1':
+    is_accepting: False
+
+edges:
+  's0':
+
+    's0':
+      symbols:
+        - '!o2'
+
+    's1':
+      symbols:
+        - 'o2'
+
+  's1':
+
+    's1':
+      symbols:
+        - '!o0 & !o1 & o2'

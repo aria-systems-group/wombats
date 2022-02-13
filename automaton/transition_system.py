@@ -363,9 +363,9 @@ class MinigridTransitionSystem(TransitionSystem):
 
         curr_state_env = self.env._get_state_from_str(curr_state)
         action = self.env.ACTION_STR_TO_ENUM[symbol]
-        next_pos, next_dir, done = self.env._make_transition(action,
-                                                             *curr_state_env)
-        next_state_label = self.env._get_state_str(next_pos, next_dir)
+        next_state, _, done = self.env._make_transition(action,
+                                                        curr_state_env)
+        next_state_label = self.env._get_state_str(next_state)
         self.current_state = next_state_label
         self.agent_state = self.env._get_state_from_str(next_state_label)
 
