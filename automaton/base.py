@@ -291,7 +291,7 @@ class Automaton(nx.MultiDiGraph, metaclass=ABCMeta):
         graph = self._get_pydot_representation()
 
         if filename:
-            graph = gv.Source(graph)
+            graph = gv.Source(graph.to_string())
             fpath = os.path.join(self._automata_display_dir, filename)
             path = graph.render(format=img_format, filename=fpath)
 
