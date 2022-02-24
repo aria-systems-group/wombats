@@ -998,7 +998,10 @@ class Automaton(nx.MultiDiGraph, metaclass=ABCMeta):
                     if symbol not in seen_symbols:
                         seen_symbols.append(symbol)
 
-                    edge_data = {'symbol': symbol}
+                    edge_data = copy.deepcopy(dest_edges_data[dest_node])
+                    edge_data.pop('symbols', None)
+                    edge_data.pop('probabilities', None)
+                    edge_data['symbol'] = symbol
 
                     if is_stochastic:
                         probability = probabilities[symbol_idx]

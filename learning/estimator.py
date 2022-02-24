@@ -524,6 +524,7 @@ def find_separating_hyperplane(X1, X2, method: str='svm',
 
         clf = SVC(**svm_kwargs)
         clf.fit(X, y)
+
         return clf.coef_, clf.intercept_[0]
 
     else:
@@ -614,7 +615,8 @@ class FitToKModes(HybridSystemEstimator):
                 if variables is None:
                     raise Exception('Could not find a separating hyperplane')
                 a, b = variables
-                f = lambda x: np.dot(a, x) >= b
+                # f = lambda x: np.dot(x, a.T) >= b
+                f = lambda x: np.dot(x, a.T) + b > -1
                 edges[src][target]['symbols'] = [f'{a}x>={b}']
                 edges[src][target]['guard'] = f
                 edges[src][target]['guardA'] = a
@@ -663,8 +665,8 @@ class FitToKModes(HybridSystemEstimator):
 
 
 class FitToKModesAndMerge(FitToKModes):
-    def __init__(self, dynamic_matrices, loss_func=np.linalg.norm, epsilon=0.1,
-                 guard_satisfaction_rate=0.9, **kwargs):
+    def __init__(self, dynamic_matrices, loss_func=np.linalg.norm, epsilon=3.0,
+                 guard_satisfaction_rate=0.1, **kwargs):
 
         super().__init__(dynamic_matrices, **kwargs)
         self.loss_func = loss_func
@@ -688,7 +690,8 @@ class FitToKModesAndMerge(FitToKModes):
         # Construct a merge relation graph G that directs nodes to the merging nodes
         G = nx.MultiDiGraph()
         for (p, q) in list(combinations(self.dfa.nodes, 2)):
-            if self.loss_func(self.dfa.nodes[p]['A'] - self.dfa.nodes[q]['A']) > self.epsilon:
+            print(self.loss_func(self.dfa.nodes[p]['A'] - self.dfa.nodes[q]['A']))
+            if self.loss_func(self.dfa.nodes[p]['A'] - self.dfa.nodes[q]['A']) < self.epsilon:
                 # TODO: For now, the larger (l) set will acquire the smaller (s) set.
                 if len(self.dfa.nodes[p]['X']) >= len(self.dfa.nodes[q]['X']):
                     # merge q into p
@@ -699,16 +702,25 @@ class FitToKModesAndMerge(FitToKModes):
                     s = p
 
                 # check if set X in q does not satisfy guards at p (other than the edge to q)
+                is_contained_in_l = True
                 for k, v in self.dfa[l].items():
                     if k == s: continue
                     Xs = self.dfa.nodes[s]['X']
-                    if np.mean(v[0]['guard'](Xs)) > self.guard_satisfaction_rate:
-                        break
-                G.add_edge(s, l)
+
+                    if 'guard' in v[0]:
+                        classification_scores = v[0]['guard'](Xs)
+                        mean_classification_score = np.mean(classification_scores)
+                        if mean_classification_score > self.guard_satisfaction_rate:
+                            is_contained_in_l = False
+                
+                if is_contained_in_l:
+                    G.add_edge(s, l)
 
         # Find pairs of source (node to be merged) and target (merger node).
         # However, there could be multiple target nodes for the source node.
-        sink_nodes = [node for node, outdegree in G.out_degree(G.nodes()).items() if outdegree == 0]
+        # sink_nodes = [node for node, outdegree in G.out_degree(G.nodes()) if outdegree == 0]
+        sink_nodes = [n for n in G.nodes() if G.out_degree(n) == 0]
+
         merge_relations = defaultdict(lambda: [])
 
         for sink_node in sink_nodes:
@@ -736,13 +748,17 @@ class FitToKModesAndMerge(FitToKModes):
         for source, targets in merge_relations.items():
 
             target = targets[0]
+            print(f'Merge Node {source} into Node {target}')
             # 1. merge set X to that of the boss
             self.dfa.nodes[target]['X'] = np.r_[self.dfa.nodes[target]['X'], self.dfa.nodes[source]['X']]
 
             # 2. delete incoming edges to source
-            for src in self.dfa.predecessors(source):
+            predecessors = list(self.dfa.predecessors(source))
+            for src in predecessors:
                 self.dfa.remove_edge(src, source)
-            for target in self.dfa.successors(source):
+            
+            successors = list(self.dfa.successors(source))
+            for target in successors:
                 self.dfa.remove_edge(source, target)
 
             # 3. delete state
