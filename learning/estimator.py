@@ -699,10 +699,10 @@ class FitToKModesAndMerge(FitToKModes):
                     s = p
 
                 # check if set X in q does not satisfy guards at p (other than the edge to q)
-                for k, v in self.dfa.edges[l].items():
+                for k, v in self.dfa[l].items():
                     if k == s: continue
                     Xs = self.dfa.nodes[s]['X']
-                    if np.mean(v['guard'](Xs)) > self.guard_satisfaction_rate:
+                    if np.mean(v[0]['guard'](Xs)) > self.guard_satisfaction_rate:
                         break
                 G.add_edge(s, l)
 
