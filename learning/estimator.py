@@ -172,7 +172,7 @@ class SpecificationEstimator(BaseEstimator, metaclass=ABCMeta):
             raise ReferenceError('Not fitted yet')
         return self.pdfa.scores(X)
 
-    def _preprocess(self, X: List[Symbols]) -> str:
+    def _preprocess(self, X: List[Symbols], filename: str = 'train.abbadingo') -> str:
         """
         Preprocess step before running inference
 
@@ -192,7 +192,7 @@ class SpecificationEstimator(BaseEstimator, metaclass=ABCMeta):
 
         train_data_file = Automaton.write_traces_to_file(X,
             alphabet_size=alphabet_size,
-            file=os.path.join('flexfringe_data', 'train.abbadingo'))
+            file=os.path.join('flexfringe_data', filename))
 
         return train_data_file
 
@@ -447,6 +447,64 @@ class TargetSpecification(SpecificationEstimator):
         :return PDFA: Learned PDFA
         """
         self._postprocess(X, self.specification)
+
+
+class HybridSpecification(SpecificationEstimator):
+    def __init__(self, **kwargs):
+        """
+        :param safe_specification:      A SafetyDFA
+        """
+        super().__init__(**kwargs)
+
+    def fit(self, X: Tuple[StateTrajs, ModeTrajs], y=None, n_trial: int =2,
+            **kwargs) -> None:
+        """
+        :param X:           A list of traces or a list of datasets
+        :param y:           Never be provided. Just being consistent
+                            with the base class
+        :param n_trial:     A number of trials to run inference
+
+        :return PDFA: Learned PDFA
+        """
+        Xs, Qs = X
+
+        train_data_file = self._preprocess(Qs, 'train.abbadingo')
+        state_file = Automaton.write_traces_to_file(Xs,
+            alphabet_size=0,
+            file=os.path.join('flexfringe_data', 'states.txt'))
+
+        # Embedding Safety during the learning process
+        kwargs = self.get_param_kwargs()
+        success = False
+        i_trial = 0
+
+        while not success and i_trial != n_trial:
+            try:
+                data = self.flexfringe.infer_model(training_file=train_data_file,
+                                            Z=state_file,
+                                            record_time=True,
+                                            **kwargs)
+
+                fdfa = active_automata.get(
+                    automaton_type='FDFA',
+                    graph_data=self.flexfringe,
+                    graph_data_format='learning_interface')
+
+                pdfa = active_automata.get(
+                    automaton_type='PDFA',
+                    graph_data=fdfa,
+                    graph_data_format='fdfa_object',
+                    merge_sinks=True)
+
+                success = True
+            except Exception as e:
+                print(e)
+                msg = f'Cannot train a model properly'
+                warnings.warn(msg)
+                pdfa = None
+                i_trial += 1
+
+        self._postprocess(Qs, pdfa)
 
 
 class HybridSystemEstimator(BaseEstimator, metaclass=ABCMeta):
@@ -712,7 +770,7 @@ class FitToKModesAndMerge(FitToKModes):
                         mean_classification_score = np.mean(classification_scores)
                         if mean_classification_score > self.guard_satisfaction_rate:
                             is_contained_in_l = False
-                
+
                 if is_contained_in_l:
                     G.add_edge(s, l)
 
@@ -756,7 +814,7 @@ class FitToKModesAndMerge(FitToKModes):
             predecessors = list(self.dfa.predecessors(source))
             for src in predecessors:
                 self.dfa.remove_edge(src, source)
-            
+
             successors = list(self.dfa.successors(source))
             for target in successors:
                 self.dfa.remove_edge(source, target)
