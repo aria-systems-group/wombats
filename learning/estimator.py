@@ -107,6 +107,9 @@ class SpecificationEstimator(BaseEstimator, metaclass=ABCMeta):
         self.dataset = None
         """Dataset used to train this estimator"""
 
+        self.success = False
+        """Fitted Result"""
+
     def get_param_kwargs(self) -> Dict:
         """
         Update kwargs for passing to FlexfringeInterface
@@ -252,6 +255,7 @@ class Vanilla(SpecificationEstimator):
                 pdfa = None
                 i_trial += 1
 
+        self.success = success
         self._postprocess(X, pdfa)
 
 
@@ -311,6 +315,7 @@ class Postprocess(SpecificationEstimator):
                 pdfa = None
                 i_trial += 1
 
+        self.success = success
         self._postprocess(X, pdfa)
 
 
@@ -371,6 +376,7 @@ class GreedyPreprocess(SpecificationEstimator):
                 pdfa = None
                 i_trial += 1
 
+        self.success = success
         self._postprocess(X, pdfa)
 
 
@@ -432,6 +438,7 @@ class Preprocess(SpecificationEstimator):
                 pdfa = None
                 i_trial += 1
 
+        self.success = success
         self._postprocess(X, pdfa)
 
 
@@ -446,6 +453,7 @@ class TargetSpecification(SpecificationEstimator):
 
         :return PDFA: Learned PDFA
         """
+        self.success = True
         self._postprocess(X, self.specification)
 
 
@@ -504,6 +512,7 @@ class HybridSpecification(SpecificationEstimator):
                 pdfa = None
                 i_trial += 1
 
+        self.success = success
         self._postprocess(Qs, pdfa)
 
 
