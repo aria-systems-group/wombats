@@ -551,7 +551,8 @@ class HybridSystemEstimator(BaseEstimator, metaclass=ABCMeta):
 
 
 def find_separating_hyperplane(X1, X2, method: str='svm',
-    svm_kwargs={'kernel': 'linear', 'C': 10000}):
+    svm_kwargs={'kernel': 'linear', 'C': 10000}, epsilon: float=0.0,
+    plot: bool=True):
     """
     Solve LP Feasibility Problem to find y=[a,b],
     i.e., variables of the hyperplane that separates
@@ -576,52 +577,82 @@ def find_separating_hyperplane(X1, X2, method: str='svm',
     n_data1, n_dim = X1.shape
     n_data2, n_dim = X2.shape
     X = np.r_[X1, X2]
-    y = np.r_[[False]*n_data1, [True]*n_data2]
+    y = np.r_[-np.ones(n_data1), np.ones(n_data2)]
 
     if method == 'svm':
 
         clf = SVC(**svm_kwargs)
         clf.fit(X, y)
 
-        return clf.coef_, clf.intercept_[0]
+        A, b = clf.coef_, clf.intercept_[0]
 
-    else:
+    elif method == 'lp':
 
-        # x1 must satisfy A*x1 >= b, \forall x1 \in X1
-        G1 = np.c_[X1, -np.ones(n_data1)]   # Construct a constraint G1*[A,b]>=0
-        # x2 must satisfy A*x2 <= b, \forall x2 \in X2
-        G2 = np.c_[-X2, np.ones(n_data2)]    # Construct a constraint G2*[A,b]>=0
+        G1 = np.c_[X1, np.ones(n_data1)] # a^T * X1 + b
+        G2 = np.c_[X2, np.ones(n_data2)] # a^T * X2 + b
         G = np.r_[G1, G2]
 
-        ones = np.r_[np.ones(n_data1), np.ones(n_data2)]
-        H = np.dot(ones.T, G) # Constraint a constraint s.t. A and b to be nonzero
+        # Constraint a constraint s.t. A and b to be nonzero
+        H = np.dot(y, G) # y (a^T * X + b)
 
-        model = gpy.Model('lp_feasibility')
+        model = gpy.Model('lp')
         model.setParam('OutputFlag', False)
         # model.setParam('NodefileStart', 0.5)
 
         A = []
         variable_names = []
         for i in range(n_dim):
-            a = model.addVar(lb=-GRB.INFINITY, vtype=GRB.CONTINUOUS, name=f'a{i}')
+            a = model.addVar(lb=-GRB.INFINITY, ub=GRB.INFINITY, vtype=GRB.CONTINUOUS, name=f'a{i}')
             A.append(a)
             variable_names.append(f'a{i}')
-        b = model.addVar(lb=-GRB.INFINITY, vtype=GRB.CONTINUOUS, name=f'b')
+        b = model.addVar(lb=-GRB.INFINITY, ub=GRB.INFINITY, vtype=GRB.CONTINUOUS, name=f'b')
         variable_names.append(f'b')
 
-        for g in G:
-            model.addConstr((A[0]*g[0] + A[1]*g[1] + b*g[2]) >= 0)
-        model.addConstr((A[0]*H[0] + A[1]*H[1] + b*H[2]) == n_data1+n_data2)
+        E = []
+        for i in range(n_data1 + n_data2):
+            e = model.addVar(lb=0.0, ub=GRB.INFINITY, vtype=GRB.CONTINUOUS, name=f'e{i}')
+            variable_names.append(f'e{i}')
+            E.append(e)
 
-        model.setObjective(0, GRB.MINIMIZE)
+        for i, g in enumerate(G):
+            # y (a^T * x + b) >= 1 - slack
+            model.addConstr(y[i] * (g[0]*A[0] + g[1]*A[1] + g[2]*b) >= 1 - E[i])
+        # \Sigma_i y_i (a^T * x_i + b) should be none zero to avoid a=0, b=0
+        model.addConstr(H[0]*A[0] + H[1]*A[1] + H[2]*b >= 2)
+
+        model.setObjective(sum(E), GRB.MINIMIZE)
         model.optimize()
         status = model.status
 
+        try:
+            variables = [model.getVarByName(v).X for v in variable_names[:n_dim+1]]
+            slack_variables = [model.getVarByName(v).X for v in variable_names[n_dim+1:]]
+        except Exception as e:
+            print(e)
+
         if status == 2 or status==5:
-            variables = [model.getVarByName(v).X for v in variable_names]
-            return np.array(variables[:-1]), variables[-1]
+            variables = [model.getVarByName(v).X for v in variable_names[:n_dim+1]]
+            slack_variables = [model.getVarByName(v).X for v in variable_names[n_dim+1:]]
+            A, b = np.array(variables[:-1]), variables[-1]
         else:
-            return None
+            A, b = None, None
+    else:
+
+        raise Exception(f'No such method: {method}')
+
+    if plot:
+        plt.figure()
+        plt.scatter(X[:, 0], X[:, 1], c=y, s=30, cmap=plt.cm.Paired)
+        lims = plt.axis()
+        xmin = np.min(X[:, 0])
+        xmax = np.max(X[:, 0])
+        xs = np.linspace(xmin - 0.1*abs(xmin), xmax + 0.1*abs(xmax), 100)
+        ys = -(A[0]/A[1]) * xs - b/A[1]
+        plt.plot(xs, ys, 'r--')
+        plt.axis(lims)
+        plt.show()
+
+    return A, b
 
 
 class FitToKModes(HybridSystemEstimator):
@@ -632,7 +663,7 @@ class FitToKModes(HybridSystemEstimator):
     def fit(self, X: Tuple[StateTrajs, ModeTrajs], y=None, **kwargs) -> None:
         self._fit(X, y, **kwargs)
 
-    def _fit(self, X: Tuple[StateTrajs, ModeTrajs], y=None, **kwargs) -> None:
+    def _fit(self, X: Tuple[StateTrajs, ModeTrajs], y=None, method='svm', **kwargs) -> None:
         Xs, Qs = X
 
         valid_modes = self._analyze_modes(Qs)
@@ -669,12 +700,12 @@ class FitToKModes(HybridSystemEstimator):
             for target in targets:
                 if src == target: continue # self loop
 
-                variables = find_separating_hyperplane(Xstate[src], Xtransit[src][target], method='svm')
-                if variables is None:
+                a, b = find_separating_hyperplane(Xstate[src], Xtransit[src][target], method=method)
+                # a, b = find_separating_hyperplane(Xstate[src], Xstate[target], method=method)
+                if a is None or b is None:
                     raise Exception('Could not find a separating hyperplane')
-                a, b = variables
                 # f = lambda x: np.dot(x, a.T) >= b
-                f = lambda x: np.dot(x, a.T) + b > -1
+                f = lambda x: np.dot(x, a.T) + b >= -1
                 edges[src][target]['symbols'] = [f'{a}x>={b}']
                 edges[src][target]['guard'] = f
                 edges[src][target]['guardA'] = a
