@@ -561,7 +561,7 @@ class HybridSystemEstimator(BaseEstimator, metaclass=ABCMeta):
 
 def find_separating_hyperplane(X1, X2, method: str='svm',
     svm_kwargs={'kernel': 'linear', 'C': 10000}, epsilon: float=0.0,
-    plot: bool=True):
+    plot: bool=False):
     """
     Solve LP Feasibility Problem to find y=[a,b],
     i.e., variables of the hyperplane that separates
@@ -594,6 +594,7 @@ def find_separating_hyperplane(X1, X2, method: str='svm',
         clf.fit(X, y)
 
         A, b = clf.coef_, clf.intercept_[0]
+        A = np.squeeze(A)
 
     elif method == 'lp':
 
@@ -657,8 +658,12 @@ def find_separating_hyperplane(X1, X2, method: str='svm',
         xmax = np.max(X[:, 0])
         xs = np.linspace(xmin - 0.1*abs(xmin), xmax + 0.1*abs(xmax), 100)
         ys = -(A[0]/A[1]) * xs - b/A[1]
-        plt.plot(xs, ys, 'r--')
-        plt.axis(lims)
+        ys1 = -(A[0]/A[1]) * xs - (b-1)/A[1]
+        ys2 = -(A[0]/A[1]) * xs - (b+1)/A[1]
+        plt.plot(xs, ys, 'k-')
+        plt.plot(xs, ys1, 'b--')
+        plt.plot(xs, ys2, 'r--')
+        plt.axis('equal')
         plt.show()
 
     return A, b
@@ -705,6 +710,8 @@ class FitToKModes(HybridSystemEstimator):
 
         # find edges excluding self loops
         edges = defaultdict(lambda: defaultdict(lambda: {}))
+
+        # Find separating hyperplane for outgoing edges
         for src, targets in transitions.items():
             for target in targets:
                 if src == target: continue # self loop
@@ -717,9 +724,24 @@ class FitToKModes(HybridSystemEstimator):
                 f = lambda x: np.dot(x, a.T) + b >= -1
                 edges[src][target]['symbols'] = [f'{a}x>={b}']
                 edges[src][target]['guard'] = f
-                edges[src][target]['guardA'] = a
-                edges[src][target]['guardb'] = b
+                edges[src][target]['A'] = a
+                edges[src][target]['b'] = b
                 edges[src][target]['X'] = Xtransit[src][target]
+
+        # Label self-loops with
+        for src, targets in transitions.items():
+            funcs = [edges[src][t]['guard'] for t in targets if src!=t]
+            for target in targets:
+                if src == target:
+                    edges[src][target]['symbols'] = ['else']
+                    if len(funcs) == 0:
+                        f = lambda x: True
+                    else:
+                        f = lambda x: not any([func(x) for func in funcs])
+                    edges[src][target]['guard'] = f
+                    edges[src][target]['A'] = np.zeros(2)
+                    edges[src][target]['b'] = 1
+                    edges[src][target]['X'] = Xstate[src]
 
         (symbol_display_map,
         states,
@@ -736,6 +758,14 @@ class FitToKModes(HybridSystemEstimator):
             final_transition_sym='$',
             empty_transition_sym='lambda',
         )
+
+        # Edges: [(src, target_node, key, value)]
+        for el in edges:
+            e = list(el)
+            edge_data = self.dfa._get_edge_data(e[0], e[1])
+            edge_data[0].update(e[2])
+            for k, v in edge_data[0].items():
+                self.dfa[e[0]][e[1]][0][k] = v
 
     def _analyze_modes(self, Qs):
 
