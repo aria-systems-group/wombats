@@ -1,5 +1,5 @@
 from .pdfa import PDFABuilder, PDFA
-from .dfa import SafetyDFABuilder, SafetyDFA
+from .dfa import SafetyDFABuilder, DFA, SafetyDFA
 from .fdfa import FDFABuilder, FDFA
 from .base import Automaton
 from .transition_system import (TSBuilder, TransitionSystem,
