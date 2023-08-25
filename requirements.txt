@@ -1,0 +1,17 @@
+bidict
+graphviz
+setuptools==65.5.0
+wheel==0.38.4 # This is required for gym 0.21 to be built.
+gym==0.21.0 # 0.21 requires gym.core.GoalEnv in gym-minigrid
+# We use ViewSizeWrapper from git+https://github.com/rohitrango/gym-minigrid.git
+IPython
+matplotlib
+networkx
+numpy
+pandas
+pyyaml
+pydot
+scikit-learn
+scikit-image
+tqdm
+# pip install --global-option=build_ext --global-option="-I$(brew --prefix graphviz)/include/" --global-option="-L$(brew --prefix graphviz)/lib/" pygraphviz
