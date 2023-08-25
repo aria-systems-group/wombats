@@ -1575,7 +1575,7 @@ class Automaton(nx.MultiDiGraph, metaclass=ABCMeta):
         display_symbols = []
 
         # need to do type-checking / polymorphism handling here
-        if not isinstance(integer_symbols, collections.Iterable):
+        if not isinstance(integer_symbols, collections.abc.Iterable):
             if isinstance(integer_symbols, int):
                 return self._symbol_display_map.inv[integer_symbols]
             elif type(integer_symbols).__module__ == 'numpy':

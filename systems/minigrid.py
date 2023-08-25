@@ -555,6 +555,14 @@ class Agent(WorldObj):
 
         return self.relative_coords(x, y) is not None
 
+    def str_to_state(self, state_str: str):
+        state_str = list(state_str)
+        state = state_str
+        state[0] = state_str[0]
+        state[1] = self.DIR_TO_STRING.inverse[state_str[1]]
+
+        return tuple(state)
+
 
 class ConstrainedAgent(Agent):
 
@@ -3079,7 +3087,7 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
 
         # Wrapped Environments
         env = ModifyMultiAgentNumActionsWrapper(env, agent_steps)
-        # env = ViewSizeWrapper(env, agent_view_size=3)
+        env = ViewSizeWrapper(env, agent_view_size=3)
         # env = FullyObsWrapper(ReseedWrapper(ev, seeds=seeds))
         env = Monitor(env, monitor_log_location,
                       video_callable=False,
@@ -3412,8 +3420,8 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
 
             prop_strings.add(prop_str)
 
-        # return '__'.join(prop_strings)
-        return prop_strings
+        return '__'.join(prop_strings)
+        # return prop_strings
 
     def _get_obs_at_state(self, curr_state: MultiAgentState) -> EnvObs:
         """
@@ -5326,7 +5334,6 @@ class BoxPacking(MultiAgentEnv):
         return dict(distance_mappings)
 
 
-
 register(
     id='MiniGrid-LavaComparison_noDryingOff-v0',
     entry_point='wombats.systems.minigrid:LavaComparison_noDryingOff'
@@ -5407,7 +5414,6 @@ register(
     entry_point='wombats.systems.minigrid:FourGrids'
 )
 
-
 register(
     id='MiniGrid-ChasingAgent-v0',
     entry_point='wombats.systems.minigrid:ChasingAgent'
@@ -5442,7 +5448,6 @@ register(
     id='MiniGrid-ToyCorridorLava-v0',
     entry_point='wombats.systems.minigrid:ToyCorridorLava'
 )
-
 
 register(
     id='MiniGrid-CorridorLava-v0',

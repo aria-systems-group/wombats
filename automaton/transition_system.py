@@ -125,7 +125,7 @@ class TransitionSystem(Automaton):
         """
 
         # need to do type-checking / polymorphism handling here
-        if isinstance(word, str) or not isinstance(word, collections.Iterable):
+        if isinstance(word, str) or not isinstance(word, collections.abc.Iterable):
             word = [word]
 
         curr_state = self.start_state
@@ -294,7 +294,7 @@ class MinigridTransitionSystem(TransitionSystem):
             self.env.render_notebook()
 
         # need to do type-checking / polymorphism handling here
-        if isinstance(word, str) or not isinstance(word, collections.Iterable):
+        if isinstance(word, str) or not isinstance(word, collections.abc.Iterable):
             word = [word]
 
         output_word, state_sequence = super().run(word, show_steps=show_steps)
