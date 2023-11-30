@@ -1574,7 +1574,7 @@ class MultiAgentMiniGridEnv(MiniGridEnv):
         top_left = self.agent_pos + f_vec * (self.agent_view_size-1) - r_vec * (self.agent_view_size // 2)
 
         # Mask of which cells to highlight
-        highlight_mask = np.zeros(shape=(self.width, self.height), dtype=np.bool)
+        highlight_mask = np.zeros(shape=(self.width, self.height), dtype=bool)
 
         # For each cell in the visibility mask
         for vis_j in range(0, self.agent_view_size):
@@ -1669,7 +1669,7 @@ class MultiAgentMiniGridEnv(MiniGridEnv):
         if not self.see_through_walls:
             vis_mask = grid.process_vis(agent_pos=(self.agent_view_size // 2 , self.agent_view_size - 1))
         else:
-            vis_mask = np.ones(shape=(grid.width, grid.height), dtype=np.bool)
+            vis_mask = np.ones(shape=(grid.width, grid.height), dtype=bool)
 
         # Make it so the agent sees what it's carrying
         # We do this by placing the carried object at the agent's position
@@ -3559,7 +3559,7 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
 
         for node in nodes.keys():
             observation = nodes[node]['observation']
-            observations.update(observation)
+            observations.add(observation)
 
         alphabet_size = len(actions)
         num_states = len(state_labels)
@@ -3877,7 +3877,7 @@ class NoDirectionAgentGrid(Grid):
 
         if highlight_mask is None:
             highlight_mask = np.zeros(shape=(self.width, self.height),
-                                      dtype=np.bool)
+                                      dtype=bool)
 
         # Compute the total grid size
         width_px = self.width * tile_size
