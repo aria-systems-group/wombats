@@ -1553,6 +1553,8 @@ class MultiAgentMiniGridEnv(MiniGridEnv):
         """
         Render the whole-grid human view
         """
+        # tmp 
+        highlight=True
 
         if close:
             if self.window:
@@ -2416,7 +2418,7 @@ class StaticMinigridTSWrapper(gym.core.Wrapper):
         """
 
         plt.imshow(self.env.render(mode='rgb_image', tile_size=64),
-                   interpolation='bilinear')
+                   interpolation='bilinear', highlight=False)
         plt.axis('off')
         if filename:
             plt.savefig(filename, dpi=dpi)
@@ -3450,7 +3452,7 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
 
         return obs
 
-    def extract_transition_system(self, n_step: int=None) -> Tuple[dict, dict]:
+    def extract_transition_system(self, n_step: int=None, wait: bool = True) -> Tuple[dict, dict]:
         """
         Extracts all data needed to build a two player game representation of
         the environment.
@@ -3501,6 +3503,13 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
                 action_str = self.ACTION_ENUM_TO_STR[tuple(map(tuple, multiactions))]
 
                 possible_edge = (src_state, dest_state)
+                
+                # if the agent can not stay in the same cell then do not construct those edges
+                if not wait:
+                    i = 0 if src_agent == 'sys' else 1
+                    if src_state[1][i] == dest_state[1][i]:
+                        continue
+
 
                 (nodes, edges,
                     _,
@@ -4703,10 +4712,15 @@ class ChasingAgentIn4Square(MultiAgentMiniGridEnv):
 
         # Place the two goal squares in the bottom-right corner
         self.put_obj(Floor(color='green'), *self.goal_pos)
-        self.grid.wall_rect(2, 2, 1, 1)
-        self.grid.wall_rect(4, 2, 1, 1)
-        self.grid.wall_rect(2, 4, 1, 1)
-        self.grid.wall_rect(4, 4, 1, 1)
+        # self.grid.wall_rect(2, 2, 1, 1)
+        # self.grid.wall_rect(4, 2, 1, 1)
+        # self.grid.wall_rect(2, 4, 1, 1)
+        # self.grid.wall_rect(4, 4, 1, 1)
+
+        self.put_obj(Lava(), *(2, 2))
+        self.put_obj(Lava(), *(4, 2))
+        self.put_obj(Lava(), *(2, 4))
+        self.put_obj(Lava(), *(4, 4))
 
         n_agent = len(self.agent_start_pos_list)
 
@@ -5274,13 +5288,15 @@ class CorridorLava(MultiAgentMiniGridEnv):
         for i in range(len(self.env_agent_start_pos)):
             p = self.env_agent_start_pos[i]
             d = self.env_agent_start_dir[i]
-            restricted_positions = [(i+1, j+1) for i, j in itertools.product(range(8), range(3, 8))]
+            # restricted_positions = [(i+1, j+1) for i, j in itertools.product(range(8), range(3, 8))]
+            restricted_positions = []
             self.put_agent(
                 ConstrainedAgent(
                     name=f'EnvAgent{i+1}',
                     view_size=self.view_size,
                     color='blue',
-                    restricted_objs=['lava', 'carpet', 'water', 'floor'],
+                    # restricted_objs=['lava', 'carpet', 'water', 'floor'],
+                    restricted_objs=['lava', 'carpet', 'floor'],
                     restricted_positions=restricted_positions
                     ),
                 *p,
