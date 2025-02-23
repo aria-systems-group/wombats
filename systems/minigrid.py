@@ -3673,6 +3673,9 @@ class Cell:
     def can_overlap(self):
         return all([obj.can_overlap() for obj in self.objs])
 
+    def see_behind(self):
+        return all([obj.see_behind() for obj in self.objs])
+
     def encode(self) -> Tuple[Tuple[int, int, int], ...]:
         """
         Return an array of n objects x 3 tuples (type, color, state)
@@ -3960,7 +3963,10 @@ class NoDirectionAgentGrid(Grid):
 
         # Highlight the cell if needed
         if highlight:
-            highlight_img(img)
+            if white_background:
+                highlight_img(img, alpha=0.5)
+            else:
+                highlight_img(img)
 
         # Downsample the image to perform supersampling/anti-aliasing
         img = downsample(img, subdivs)
