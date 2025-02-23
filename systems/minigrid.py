@@ -3404,6 +3404,51 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
         n_obj, n_info = encoded_cell.shape
         # obj_type, obj_color, obj_state = obs[col_idx, row_idx]
 
+        # # TESTING
+        # # from typing import Iterable
+        grid, vis_mask = self.env.gen_obs_grid()
+
+        # take the negation of the vis_mask as:
+        #  The cell value is True if the see_behind value is True. Meaning we can not obsrve something at that cell
+        my_vis_mask = np.logical_not(vis_mask) 
+
+        count = 0
+        for column in reversed(range(self.agent_view_size)):
+            for row in range(self.agent_view_size):
+                if not my_vis_mask[row, column]:
+                    count += 1
+                    continue
+                
+                g = grid.grid[count]
+                count += 1
+                if g and not None:
+                    if hasattr(g, 'objs'):
+                        for obj in g.objs:
+                            if  isinstance(obj, ConstrainedAgent):
+                                print(f"Agent Observed!!!!!: Sys State: {sys_state} Emv State: {obj.state}")
+                                break
+                    elif isinstance(g, ConstrainedAgent):
+                        print(f"Agent Observed!!!!!: Sys State: {sys_state} Emv State: {g.state}")
+                        break
+
+        
+        
+        
+        # for cdx, column in enumerate(my_vis_mask):
+        #     for rdx, cell_visibile in enumerate(column):
+        #         # for g in grid.grid:
+        #         if not cell_visibile:
+        #             continue
+                
+        #         g = grid.grid[rdx*self.agent_view_size + cdx]
+        #         if g and not None:
+        #             if hasattr(g, 'objs'):
+        #                 for obj in g.objs:
+        #                     if  isinstance(obj, ConstrainedAgent):
+        #                         print(f"Agent Observed!!!!!: Sys State: {sys_state} Emv State: {obj.state}")
+        #             elif isinstance(g, ConstrainedAgent):
+        #                 print(f"Agent Observed!!!!!: Sys State: {sys_state} Emv State: {g.state}")
+
         prop_strings = set()
 
         # for i_obj in range(n_obj):
