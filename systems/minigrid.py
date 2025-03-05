@@ -3119,7 +3119,7 @@ class DynamicMinigrid2PGameWrapper(gym.core.Wrapper):
                    interpolation='bilinear')
         plt.axis('off')
         if filename:
-            plt.savefig(filename, dpi=dpi)
+            plt.savefig(filename, dpi=dpi, bbox_inches='tight')
         plt.show()
 
     def reset(self, new_monitor_file: bool = False, **kwargs) -> np.ndarray:
